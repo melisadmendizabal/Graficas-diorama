@@ -6,11 +6,11 @@ use std::f32;
 pub struct Cube {
     // Center en espacio mundo, half_size en cada eje (caja AABB en espacio local)
     pub center: Vector3,
-    pub half_size: Vector3,
+    pub half_size: Vector3, //dimesion o tamaño del cubo
     // Rotación en radianes (rotar primero X, luego Y) — puedes ajustar rx, ry
     pub rot_x: f32,
     pub rot_y: f32,
-    pub material: Material,
+    pub material: Material, //la propiedades, color, reflectividad, albedo etc.
 }
 
 impl Cube {
@@ -34,6 +34,7 @@ impl Cube {
         )
     }
 
+    //rotacions combinadas
     // Aplicar rotación forward: Rx then Ry -> v' = Ry(Rx(v))
     fn rotate_forward(&self, v: Vector3) -> Vector3 {
         let v = Cube::rotate_x(v, self.rot_x);
@@ -47,6 +48,7 @@ impl Cube {
     }
 
     // safe slab como antes: maneja componentes de dirección ~ 0
+    //una técnica estándar para probar intersección entre un rayo y una caja AABB (Axis-Aligned Bounding Box).
     fn safe_slab(ox: f32, dx: f32, min: f32, max: f32) -> (f32, f32) {
         let eps = 1e-8;
         if dx.abs() < eps {
@@ -64,6 +66,7 @@ impl Cube {
 }
 
 impl RayIntersect for Cube {
+    //Si lanzo un rayo desde un punto, dime si toca este objeto y dame la información del impacto.
     fn ray_intersect(&self, ray_origin: &Vector3, ray_direction: &Vector3) -> Option<HitInfo> {
         // Transformar rayo al espacio local del cubo:
         // 1) trasladar por -center
@@ -85,6 +88,7 @@ impl RayIntersect for Cube {
         if txmin > tzmax || tzmin > txmax { return None; }
         if tymin > tzmax || tzmin > tymax { return None; }
 
+        //determinar entradas y salidas
         let t_near = txmin.max(tymin).max(tzmin);
         let t_far  = txmax.min(tymax).min(tzmax);
 
@@ -125,6 +129,7 @@ impl RayIntersect for Cube {
         // Normales rotan con la rotación forward (rotación sin translación)
         let world_normal = self.rotate_forward(local_normal).normalized();
 
+        //detalles del impacto
        Some(HitInfo {
                 hit: true,
                 point: world_point,

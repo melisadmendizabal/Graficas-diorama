@@ -6,11 +6,12 @@ pub struct Camera {
     pub center: Vector3,     // que mira la camara  7, 100, 5
     pub up: Vector3,     // what is up? for the camera
 
-    pub forward: Vector3,
-    pub right: Vector3,
+    pub forward: Vector3, //adelante
+    pub right: Vector3, //a la derecha (calculado)
 }
 
 impl Camera {
+    //crea una camara inicial y luego llama a la otra fución para calculas arriba y derecha
     pub fn new(eye: Vector3, center: Vector3, up: Vector3) -> Self {
         let mut camera = Camera {
             eye,
@@ -23,12 +24,15 @@ impl Camera {
         camera.update_basis();
         camera
     }
+
+    //recalcula los ejes de la camara
     pub fn update_basis(&mut self) {
         self.forward = (self.center - self.eye).normalized();
         self.right = self.forward.cross(self.up).normalized();
         self.up = self.right.cross(self.forward);
     }
 
+    //hace girar la cámara
     pub fn orbit(&mut self, yaw: f32, pitch: f32) {
         let relative_pos = self.eye - self.center;
 
@@ -58,6 +62,8 @@ impl Camera {
         self.update_basis();
     }
 
+    //Convierte un punto p de un sistema de coordenadas a otro según la base de la cámara.
+    //Es útil para transformar posiciones del mundo al espacio de la cámara (por ejemplo, al renderizar).
     pub fn basis_change(&self, p: &Vector3) -> Vector3 {
         Vector3::new(
             p.x * self.right.x + p.y * self.up.x - p.z * self.forward.x,

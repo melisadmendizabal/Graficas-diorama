@@ -3,7 +3,7 @@ use raylib::prelude::*;
 pub struct Framebuffer{
     pub width:i32,
     pub height:i32,
-    pub color_buffer: Image,
+    pub color_buffer: Image, //imagen, literalmente
     background_color:Color,
     current_color:Color,
     pixel_data: Vec<Color>,

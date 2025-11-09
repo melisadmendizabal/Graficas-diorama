@@ -238,7 +238,7 @@ pub fn render(framebuffer: &mut Framebuffer, objects: &[&dyn RayIntersect], came
     let perspective_scale = (fov * 0.5).tan();
 
     let light = Light {
-                position: Vector3::new(2.0, 4.0, -2.0),
+                position: Vector3::new(10.0, 5.0, 10.0),
                 color: Vector3::new(1.0, 1.0, 1.0),
                 intensity: 1.0,
             };
@@ -273,7 +273,7 @@ fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Cubo")
+        .title("Diorama")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
 
@@ -282,8 +282,11 @@ fn main() {
 
     let mut texture_manager = TextureManager::new();
     texture_manager.load_texture(&mut window, &raylib_thread, "assets/brick.png");
+    texture_manager.load_texture(&mut window, &raylib_thread, "assets/sand.png");
+    texture_manager.load_texture(&mut window, &raylib_thread, "assets/water_flow.png");
 
 
+    //ladrillo
     let purple_matte = Material {
         diffuse: Color::new(160, 110, 230, 255),
         specular: 32.0,
@@ -292,6 +295,28 @@ fn main() {
         refractive_index: 1.0,
         albedo: [0.8, 0.2],
         texture_path: Some("assets/brick.png".to_string())
+    };
+
+    //arena
+    let sand_material = Material {
+        diffuse: Color::new(160, 110, 230, 255),
+        specular: 32.0,
+        reflectivity: 0.1,
+        transparency: 0.0,
+        refractive_index: 1.0,
+        albedo: [0.9, 0.1],
+        texture_path: Some("assets/sand.png".to_string())
+    };
+
+    //Agua
+    let water_flow_material = Material {
+        diffuse: Color::new(160, 110, 230, 255),
+        specular: 32.0,
+        reflectivity: 0.1,
+        transparency: 0.0,
+        refractive_index: 1.0,
+        albedo: [0.9, 0.1],
+        texture_path: Some("assets/water_flow.png".to_string())
     };
 
     let mirror = Material {
@@ -320,7 +345,7 @@ fn main() {
         half_size: Vector3::new(1.0, 1.0, 1.0),
         rot_x: 20f32.to_radians(),
         rot_y: (-30f32).to_radians(),
-        material: purple_matte,
+        material: purple_matte.clone(),
     };
     
     let cube2 = Cube {
@@ -339,15 +364,263 @@ fn main() {
         material: mirror,
     };
 
+    //Centro
+    let center = Cube {
+        center: Vector3::new(0.0, 0.0, 0.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: purple_matte.clone(),
+    };
 
-    let objects_vec: Vec<&dyn RayIntersect> = vec![&cube,&cube2,&cube3];
+//ARENA
+    //todos los bloques de arena de la primera capa
+    let sandderecha = Cube {
+                    //adelante   arriba  derecha
+        center: Vector3::new(0.0, 0.0, -2.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand0_m3_4 = Cube {
+        center: Vector3::new(8.0, -6.0, 0.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand1_m3_4 = Cube {
+        center: Vector3::new(8.0, -6.0, 2.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand2_m3_4 = Cube {
+        center: Vector3::new(8.0, -6.0, 4.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand3_m3_4 = Cube {
+        center: Vector3::new(8.0, -6.0, 6.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m3_4 = Cube {
+        center: Vector3::new(8.0, -6.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m3_3 = Cube {
+        center: Vector3::new(6.0, -6.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m3_2 = Cube {
+        center: Vector3::new(4.0, -6.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+
+    //todos los bloques de arena de la segunda capa
+    let sand3_m2_4 = Cube {
+        center: Vector3::new(8.0, -4.0, 6.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m2_3 = Cube {
+        center: Vector3::new(6.0, -4.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m2_2 = Cube {
+        center: Vector3::new(4.0, -4.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m2_1 = Cube {
+        center: Vector3::new(2.0, -4.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand3_m2_1 = Cube {
+        center: Vector3::new(2.0, -4.0, 6.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand2_m2_1 = Cube {
+        center: Vector3::new(2.0, -4.0, 4.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand4_m2_0 = Cube {
+        center: Vector3::new(0.0, -4.0, 8.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand1_m1_1 = Cube {
+        center: Vector3::new(2.0, -2.0, 2.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let sand1_m2_2 = Cube {
+        center: Vector3::new(4.0, -4.0, 2.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+//AGUA
+    let water2_m2_2 = Cube {
+        center: Vector3::new(4.0, -4.0, 4.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+    let water3_m2_2 = Cube {
+        center: Vector3::new(4.0, -4.0, 6.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+    let water3_m2_3 = Cube {
+        center: Vector3::new(6.0, -4.0, 6.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+    let water2_m2_3 = Cube {
+        center: Vector3::new(6.0, -4.0, 4.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+    let water1_m2_3 = Cube {
+        center: Vector3::new(6.0, -4.0, 2.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+
+    let water1_m2_4 = Cube {
+        center: Vector3::new(8.0, -4.0, 2.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+    let water0_m2_4 = Cube {
+        center: Vector3::new(8.0, -4.0, 0.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+
+    let water2_m2_4 = Cube {
+        center: Vector3::new(8.0, -4.0, 4.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: water_flow_material.clone(),
+    };
+ 
+ 
+   
+
+
+
+
+
+
+    let cubeSand3 = Cube {
+        center: Vector3::new(0.0, 0.0, 3.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+    let cubeSand4 = Cube {
+        center: Vector3::new(0.0, 0.0, 0.0),
+        half_size: Vector3::new(1.0, 1.0, 1.0),
+        rot_x: 0.0,
+        rot_y: 0.0,
+        material: sand_material.clone(),
+    };
+
+
+    let objects_vec: Vec<&dyn RayIntersect> = vec![&center, 
+    
+            &sand4_m3_4, &sand3_m3_4, &sand2_m3_4, &sand1_m3_4, &sand0_m3_4, 
+            &sand4_m3_2, &sand4_m3_3, &sand3_m2_4, &sand4_m2_3, &sand4_m2_2, &sand4_m2_1, &sand4_m2_0, &sand3_m2_1,
+            &sand2_m2_1, &sand1_m1_1, &sand1_m2_2, 
+
+            &water2_m2_2, &water3_m2_2, &water3_m2_3, &water2_m2_3, &water1_m2_3,
+            &water0_m2_4, &water1_m2_4, &water2_m2_4,
+            &cubeSand3];
     let objects_slice: &[&dyn RayIntersect] = &objects_vec;
 
-     let mut camera = Camera::new(
-        Vector3::new(0.0, 0.0, 10.0),  // eye
-        Vector3::new(0.0, 0.0, 0.0),  // center
-        Vector3::new(0.0, 1.0, 0.0),  // up
-    );
+        let mut camera = Camera::new(
+            Vector3::new(30.0, 5.0, 30.0),  // eye
+            Vector3::new(0.0, 0.0, 0.0),  // center
+            Vector3::new(0.0, 1.0, 0.0),  // up
+        );
     let rotation_speed = PI / 50.0;
 
     while !window.window_should_close() {
