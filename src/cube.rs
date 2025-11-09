@@ -124,6 +124,18 @@ impl RayIntersect for Cube {
             }
         }
 
+        // Elegir textura según la cara golpeada
+        let face_texture = if local_normal.y > 0.9 {
+            self.material.texture_path.as_ref().map(|t| &t.top)
+        } else if local_normal.y < -0.9 {
+            self.material.texture_path.as_ref().map(|t| &t.bottom)
+        } else if local_normal.x.abs() > 0.9 {
+            self.material.texture_path.as_ref().map(|t| &t.side_x)
+        } else {
+            self.material.texture_path.as_ref().map(|t| &t.side_z)
+        };
+
+
         // Transformar punto y normal de vuelta a espacio mundo
         let world_point = self.rotate_forward(local_hit) + self.center;
         // Normales rotan con la rotación forward (rotación sin translación)
@@ -137,7 +149,9 @@ impl RayIntersect for Cube {
                 normal: world_normal,
                 local_normal,                      // normal en espacio local
                 distance: t,
+                texture_path: face_texture.cloned(),
                 material: self.material.clone(),
+                
             })
     }
 

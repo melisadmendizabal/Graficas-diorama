@@ -8,5 +8,13 @@ pub struct Material {
     pub transparency: f32,
     pub refractive_index: f32,
     pub albedo: [f32; 2],
-    pub texture_path: Option<String>,
+    pub texture_path:  Option<TextureFaces>,
+}
+
+#[derive(Clone)]
+pub struct TextureFaces {
+    pub top: String,
+    pub bottom: String,
+    pub side_x: String,
+    pub side_z: String,
 }

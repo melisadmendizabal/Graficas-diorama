@@ -9,6 +9,9 @@ pub struct HitInfo {
     pub local_normal: Vector3, // normal en espacio local (útil para decidir cara)
     pub distance: f32,
     pub material: Material,
+    pub texture_path: Option<String>,
+    
+
 }
 
 pub trait RayIntersect: Send + Sync {
