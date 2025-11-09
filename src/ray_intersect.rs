@@ -11,6 +11,10 @@ pub struct HitInfo {
     pub material: Material,
 }
 
-pub trait RayIntersect {
-    fn ray_intersect(&self, ray_origin: &Vector3, ray_direction: &Vector3) -> Option<HitInfo>;
+pub trait RayIntersect: Send + Sync {
+    fn ray_intersect(
+        &self,
+        ray_origin: &Vector3,
+        ray_direction: &Vector3
+    ) -> Option<HitInfo>;
 }

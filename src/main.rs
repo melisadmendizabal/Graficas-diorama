@@ -4,6 +4,7 @@
 
 use raylib::prelude::*;
 use std::f32::consts::PI;
+use rayon::prelude::*;
 
 mod framebuffer;
 mod ray_intersect;
@@ -230,24 +231,34 @@ fn procedural_sky(dir: Vector3) -> Vector3 {
 }
 
 // pub fn render(framebuffer: &mut Framebuffer, objects: &[&dyn RayIntersect]) {
-pub fn render(framebuffer: &mut Framebuffer, objects: &[&dyn RayIntersect], camera: &Camera, texture_manager: &TextureManager) {
+pub fn render(
+    framebuffer: &mut Framebuffer,
+    objects: &[&dyn RayIntersect],
+    camera: &Camera,
+    texture_manager: &TextureManager,
+) {
     let width = framebuffer.width as f32;
     let height = framebuffer.height as f32;
     let aspect_ratio = width / height;
     let fov = PI / 3.0;
     let perspective_scale = (fov * 0.5).tan();
-
     let light = Light {
-                position: Vector3::new(10.0, 5.0, 10.0),
-                color: Vector3::new(1.0, 1.0, 1.0),
-                intensity: 1.0,
-            };
+        position: Vector3::new(2.0, 4.0, -2.0),
+        color: Vector3::new(1.0, 1.0, 1.0),
+        intensity: 1.0,
+    };
 
-    for y in 0..framebuffer.height {
-        for x in 0..framebuffer.width {
-            let screen_x = (2.0 * x as f32) / width - 1.0;
-            let screen_y = -(2.0 * y as f32) / height + 1.0;
+    // Generamos todas las coordenadas (x, y)
+    let pixels: Vec<(i32, i32)> = (0..framebuffer.height)
+        .flat_map(|y| (0..framebuffer.width).map(move |x| (x, y)))
+        .collect();
 
+    // Procesamos cada pixel en paralelo
+    let colors: Vec<(i32, i32, Color)> = pixels
+        .par_iter()
+        .map(|(x, y)| {
+            let screen_x = (2.0 * *x as f32) / width - 1.0;
+            let screen_y = -(2.0 * *y as f32) / height + 1.0;
             let screen_x = screen_x * aspect_ratio * perspective_scale;
             let screen_y = screen_y * perspective_scale;
 
@@ -255,17 +266,25 @@ pub fn render(framebuffer: &mut Framebuffer, objects: &[&dyn RayIntersect], came
             let rotated_direction = camera.basis_change(&ray_direction);
 
             let ray_color = cast_ray(&camera.eye, &rotated_direction, objects, &light, 0, texture_manager);
+
             let pixel_color = Color::new(
                 (ray_color.x.clamp(0.0, 1.0) * 255.0) as u8,
                 (ray_color.y.clamp(0.0, 1.0) * 255.0) as u8,
                 (ray_color.z.clamp(0.0, 1.0) * 255.0) as u8,
                 255,
             );
-            framebuffer.set_current_color(pixel_color);
-            framebuffer.set_pixel(x, y);
-        }
+
+            (*x, *y, pixel_color)
+        })
+        .collect();
+
+    // Aplicamos todos los colores calculados
+    for (x, y, color) in colors {
+        framebuffer.set_current_color(color);
+        framebuffer.set_pixel(x, y);
     }
 }
+
 
 fn main() {
     let window_width = 900;
