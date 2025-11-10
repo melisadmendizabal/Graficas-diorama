@@ -32,6 +32,42 @@ impl Camera {
         self.up = self.right.cross(self.forward);
     }
 
+    pub fn zoom(&mut self, delta: f32) {
+        let direction = (self.center - self.eye).normalized();
+        let current_distance = (self.center - self.eye).length();
+        
+        // Límites de zoom
+        const MIN_DISTANCE: f32 = 5.0;   // No más cerca de 5 unidades
+        const MAX_DISTANCE: f32 = 100.0; // No más lejos de 100 unidades
+        
+        // Calcula la nueva distancia
+        let new_distance = (current_distance + delta).clamp(MIN_DISTANCE, MAX_DISTANCE);
+        
+        // Solo actualiza si cambió la distancia (evita cálculos innecesarios)
+        if (new_distance - current_distance).abs() > 0.001 {
+            // Mueve la cámara a la nueva distancia
+            self.eye = self.center - direction * new_distance;
+            self.update_basis();
+        }
+    }
+
+    // Alternativa: zoom basado en multiplicador (más suave)
+    pub fn zoom_smooth(&mut self, factor: f32) {
+        let direction = (self.center - self.eye).normalized();
+        let current_distance = (self.center - self.eye).length();
+        
+        const MIN_DISTANCE: f32 = 10.0;
+        const MAX_DISTANCE: f32 = 50.0;
+        
+        // Multiplica la distancia actual por el factor
+        let new_distance = (current_distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
+        
+        if (new_distance - current_distance).abs() > 0.001 {
+            self.eye = self.center - direction * new_distance;
+            self.update_basis();
+        }
+    }
+
     //hace girar la cámara
     pub fn orbit(&mut self, yaw: f32, pitch: f32) {
         let relative_pos = self.eye - self.center;

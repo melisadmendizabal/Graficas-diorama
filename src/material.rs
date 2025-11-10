@@ -9,6 +9,8 @@ pub struct Material {
     pub refractive_index: f32,
     pub albedo: [f32; 2],
     pub texture_path:  Option<TextureFaces>,
+    pub emission: Vector3,  
+    pub emission_strength: f32,
 }
 
 #[derive(Clone)]

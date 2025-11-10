@@ -13,7 +13,12 @@ mod material;
 mod camera;
 mod light;
 mod textures;
+// Al inicio del main.rs, agrega estos módulos:
+mod scene;
+mod materials;
+mod skybox;
 
+use skybox::Skybox;
 use framebuffer::Framebuffer;
 use ray_intersect::{RayIntersect, HitInfo};
 use cube::Cube;
@@ -22,6 +27,8 @@ use camera::Camera;
 use light::Light;
 use textures::TextureManager;
 use material::TextureFaces;
+use crate::materials::Materials;
+use crate::scene::Scene;
 
 // Util para comprobar si hay cualquier intersección entre origin y origin + dir*max_dist
 fn intersects_any(
@@ -119,19 +126,26 @@ fn map_uv_for_cube(hit_point: &Vector3, normal: &Vector3) -> Option<(f32, f32)> 
     Some((u.clamp(0.0, 1.0), v.clamp(0.0, 1.0)))
 }
 
-
+// Función helper corregida
+fn uv_repeat(coord: f32, half_size: f32) -> f32 {
+    // Normaliza el rango [-half_size, half_size] a [0, 1]
+    let normalized = (coord + half_size) / (2.0 * half_size);
+    let c = normalized % 1.0;
+    if c < 0.0 { c + 1.0 } else { c }
+}
 
 // firma actualizada: ahora recibe texture_manager: &TextureManager
 pub fn cast_ray(
     ray_origin: &Vector3,
     ray_direction: &Vector3,
     objects: &[&dyn RayIntersect],
-    light: &Light,
+    lights: &[Light],
     depth: u32,
     texture_manager: &TextureManager,
+    skybox: &Skybox,
 ) -> Vector3 {
     if depth > 3 {
-        return Vector3::new(0.1, 0.1, 0.2); // sky
+        return skybox.sample(*ray_direction, texture_manager);
     }
 
     let mut closest_hit: Option<HitInfo> = None;
@@ -144,28 +158,54 @@ pub fn cast_ray(
     }
 
     if let Some(hit) = closest_hit {
-        let light_dir = (light.position - hit.point).normalized();
-        let view_dir = (*ray_origin - hit.point).normalized();
         let m = hit.material;
 
-        // sombra
-        let shadow_origin: Vector3 = hit.point + hit.normal * 1e-3;
-        let in_shadow = intersects_any(&shadow_origin, &light_dir, objects, (light.position - hit.point).length() - 1e-3);
-        let shadow_intensity = if in_shadow { 0.8 } else { 0.0 };
-        let light_intensity = light.intensity * (1.0 - shadow_intensity);
+        // Si el material es emisivo, retorna su emisión directamente
+        if m.emission_strength > 0.0 {
+            let mut base_color = Vector3::new(
+                m.diffuse.r as f32 / 255.0,
+                m.diffuse.g as f32 / 255.0,
+                m.diffuse.b as f32 / 255.0,
+            );
 
-        // color base desde material
+            if let Some(tex_faces) = &m.texture_path {
+                let face_path = if hit.local_normal.y > 0.9 {
+                    &tex_faces.top
+                } else if hit.local_normal.y < -0.9 {
+                    &tex_faces.bottom
+                } else if hit.local_normal.x.abs() > 0.9 {
+                    &tex_faces.side_x
+                } else {
+                    &tex_faces.side_z
+                };
+
+                // ← TODAS las llamadas con 1.0
+                let (u, v) = if hit.local_normal.y.abs() > 0.9 {
+                    (uv_repeat(hit.local_point.x, 1.0), uv_repeat(hit.local_point.z, 1.0))
+                } else if hit.local_normal.x.abs() > 0.9 {
+                    (uv_repeat(hit.local_point.z, 1.0), uv_repeat(hit.local_point.y, 1.0))
+                } else {
+                    (uv_repeat(hit.local_point.x, 1.0), uv_repeat(hit.local_point.y, 1.0))
+                };
+
+                let color = texture_manager.sample_uv(face_path, u, v);
+                base_color = color;
+            }
+
+            return base_color * m.emission * m.emission_strength;
+        }
+
+        // Código para materiales no emisivos
+        let view_dir = (*ray_origin - hit.point).normalized();
+
+        // Color base desde material
         let mut base_color = Vector3::new(
             m.diffuse.r as f32 / 255.0,
             m.diffuse.g as f32 / 255.0,
             m.diffuse.b as f32 / 255.0,
         );
 
-        // Si hay textura, usamos UV local (si existe) y sampleamos con texture_manager.sample_uv
-        // En tu función cast_ray, reemplaza la sección de cálculo de UV con esto:
-// En tu función cast_ray, reemplaza la sección de cálculo de UV con esto:
-
-        // Si hay textura, usamos UV local (si existe) y sampleamos con texture_manager.sample_uv
+        // Aplica textura
         if let Some(tex_faces) = &m.texture_path {
             let face_path = if hit.local_normal.y > 0.9 {
                 &tex_faces.top
@@ -177,69 +217,71 @@ pub fn cast_ray(
                 &tex_faces.side_z
             };
 
-            // La clave: dividir por 2.0 siempre (tamaño de un bloque de Minecraft)
-            // Esto hace que la textura se repita cada 2 unidades sin importar el tamaño del cubo
-            // local_point está en el rango [-half_size, +half_size]
-            
+            // ← TODAS las llamadas con 1.0
             let (u, v) = if hit.local_normal.y.abs() > 0.9 {
-                // Cara top/bottom: usa X y Z
-                let u = (hit.local_point.x / 2.0).fract();
-                let v = (hit.local_point.z / 2.0).fract();
-                (u, v)
+                (uv_repeat(hit.local_point.x, 1.0), uv_repeat(hit.local_point.z, 1.0))
             } else if hit.local_normal.x.abs() > 0.9 {
-                // Cara lateral X: usa Z y Y
-                let u = (hit.local_point.z / 2.0).fract();
-                let v = (hit.local_point.y / 2.0).fract();
-                (u, v)
+                (uv_repeat(hit.local_point.z, 1.0), uv_repeat(hit.local_point.y, 1.0))
             } else {
-                // Cara lateral Z: usa X y Y
-                let u = (hit.local_point.x / 2.0).fract();
-                let v = (hit.local_point.y / 2.0).fract();
-                (u, v)
+                (uv_repeat(hit.local_point.x, 1.0), uv_repeat(hit.local_point.y, 1.0))
             };
-
-            // Aseguramos que u,v estén en [0,1] (manejo de valores negativos)
-            let u = if u < 0.0 { u + 1.0 } else { u };
-            let v = if v < 0.0 { v + 1.0 } else { v };
 
             let color = texture_manager.sample_uv(face_path, u, v);
             base_color = color;
         }
 
-        let diffuse_intensity = hit.normal.dot(light_dir).max(0.0) * light_intensity;
-        let diffuse = base_color * diffuse_intensity;
+        // ¡ACUMULA ILUMINACIÓN DE TODAS LAS LUCES!
+        let mut total_diffuse = Vector3::zero();
+        let mut total_specular = Vector3::zero();
 
-        // specular con la luz
-        let reflect_dir = reflect(&-light_dir, &-hit.normal).normalized();
-        let specular_intensity = view_dir.dot(reflect_dir).max(0.0).powf(m.specular) * light_intensity;
-        let specular = light.color * specular_intensity;
+        for light in lights {
+            let light_dir = (light.position - hit.point).normalized();
+            
+            // Sombra para esta luz
+            let shadow_origin = hit.point + hit.normal * 1e-3;
+            let light_distance = (light.position - hit.point).length();
+            let in_shadow = intersects_any(&shadow_origin, &light_dir, objects, light_distance - 1e-3);
+            
+            let shadow_intensity = if in_shadow { 0.8 } else { 0.0 };
+            let light_intensity = light.intensity * (1.0 - shadow_intensity);
+
+            // Diffuse de esta luz
+            let diffuse_intensity = hit.normal.dot(light_dir).max(0.0) * light_intensity;
+            total_diffuse = total_diffuse + (base_color * light.color * diffuse_intensity);
+
+            // Specular de esta luz
+            let reflect_dir = reflect(&-light_dir, &hit.normal).normalized();
+            let specular_intensity = view_dir.dot(reflect_dir).max(0.0).powf(m.specular) * light_intensity;
+            total_specular = total_specular + (light.color * specular_intensity);
+        }
 
         // Reflection
-        let mut reflection_color = Vector3::new(0.1, 0.1, 0.2);
+        let mut reflection_color = skybox.sample(*ray_direction, texture_manager);
         if m.reflectivity > 0.0 {
             let rdir = reflect(ray_direction, &hit.normal).normalized();
             let rorigin = hit.point + hit.normal * 1e-3;
-            reflection_color = cast_ray(&rorigin, &rdir, objects, light, depth + 1, texture_manager);
+            reflection_color = cast_ray(&rorigin, &rdir, objects, lights, depth + 1, texture_manager, skybox);
         }
 
-        // Refraction
         let mut refraction_color = Vector3::zero();
         if m.transparency > 0.0 {
             let refr = refract(ray_direction, &hit.normal, m.refractive_index).normalized();
             let rorigin = hit.point - hit.normal * 1e-3;
-            refraction_color = cast_ray(&rorigin, &refr, objects, light, depth + 1, texture_manager);
+            refraction_color = cast_ray(&rorigin, &refr, objects, lights, depth + 1, texture_manager, skybox);
         }
 
-        let color = diffuse * m.albedo[0]
-            + specular * m.albedo[1]
+        let color = total_diffuse * m.albedo[0]
+            + total_specular * m.albedo[1]
             + reflection_color * m.reflectivity
             + refraction_color * m.transparency;
 
         color
     } else {
-        procedural_sky(*ray_direction)
+        skybox.sample(*ray_direction, texture_manager)
     }
 }
+
+
 
 
 
@@ -273,22 +315,18 @@ pub fn render(
     framebuffer: &mut Framebuffer,
     objects: &[&dyn RayIntersect],
     camera: &Camera,
+    lights: &[Light],
     texture_manager: &TextureManager,
+    skybox: &Skybox,  // ← NUEVO
 ) {
     let width = framebuffer.width as f32;
     let height = framebuffer.height as f32;
     let aspect_ratio = width / height;
     let fov = PI / 3.0;
     let perspective_scale = (fov * 0.5).tan();
-    let light = Light {
-        position: Vector3::new(2.0, 2.0, 2.0),
-        color: Vector3::new(1.0, 1.0, 1.0),
-        intensity: 1.0,
-    };
 
-    // OPTIMIZACIÓN: Procesar directamente sin crear vector intermedio
     let colors: Vec<(i32, i32, Color)> = (0..framebuffer.height)
-        .into_par_iter()  // Paraleliza por filas
+        .into_par_iter()
         .flat_map(|y| {
             (0..framebuffer.width)
                 .map(|x| {
@@ -300,7 +338,7 @@ pub fn render(
                     let ray_direction = Vector3::new(screen_x, screen_y, -1.0).normalized();
                     let rotated_direction = camera.basis_change(&ray_direction);
 
-                    let ray_color = cast_ray(&camera.eye, &rotated_direction, objects, &light, 0, texture_manager);
+                    let ray_color = cast_ray(&camera.eye, &rotated_direction, objects, lights, 0, texture_manager, skybox);  // ← Pasa skybox
 
                     let pixel_color = Color::new(
                         (ray_color.x.clamp(0.0, 1.0) * 255.0) as u8,
@@ -315,13 +353,13 @@ pub fn render(
         })
         .collect();
 
-    // Aplicamos todos los colores calculados
     for (x, y, color) in colors {
         framebuffer.set_current_color(color);
         framebuffer.set_pixel(x, y);
     }
 }
 
+// Y en la función main:
 fn main() {
     let window_width = 900;
     let window_height = 700;
@@ -335,788 +373,220 @@ fn main() {
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32, Color::BLACK);
     framebuffer.set_background_color(Color::new(201, 201, 201, 255));
 
+    // Carga todas las texturas
     let mut texture_manager = TextureManager::new();
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/brick.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/sand.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/water_flow.png");
+    let textures = [
+        "assets/brick.png", "assets/sand.png", "assets/water_flow.png",
+        "assets/grass_path_side.png", "assets/grass_path_top.png", "assets/dirt.png",
+        "assets/iron_ore.png", "assets/planks_big_oak.png", "assets/stone_granite.png",
+        "assets/diamond_ore.png", "assets/stone_diorite.png", "assets/stone.png",
+        "assets/azalea_leaves_flowers.png", "assets/bookshelf.png", "assets/planks_oak.png",
+        "assets/furnace_top.png", "assets/furnace_front_off.png", "assets/pumpkin_top.png",
+        "assets/pumpkin_side.png", "assets/pumpkin_face_off.png", "assets/noteblock.png",
+        "assets/redstone_lamp_on.png", "assets/cielo_top.png", "assets/cielo_bot.png",
+        "assets/cielo1.png", "assets/cielo2.png"
+    ];
+    for texture in &textures {
+        texture_manager.load_texture(&mut window, &raylib_thread, texture);
+    }
 
-    //texturas de tierra con grama
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/grass_path_side.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/grass_path_top.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/dirt.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/iron_ore.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/planks_big_oak.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/stone_granite.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/diamond_ore.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/stone_diorite.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/stone.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/azalea_leaves_flowers.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/bookshelf.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/planks_oak.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/furnace_top.png");
-    texture_manager.load_texture(&mut window, &raylib_thread, "assets/furnace_front_off.png");
+    let skybox = Skybox::new_simple_minecraft();
 
+    // Crea los materiales
+    let mat = Materials::new();
 
-    ////horno
-    let horno_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/furnace_top.png".to_string(),
-            bottom: "assets/furnace_front_off.png".to_string(),
-            side_x: "assets/furnace_front_off.png".to_string(),
-            side_z: "assets/furnace_front_off.png".to_string(),
-        }),
-    };
-    ////Madera
-    let madera_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/planks_oak.png".to_string(),
-            bottom: "assets/planks_oak.png".to_string(),
-            side_x: "assets/planks_oak.png".to_string(),
-            side_z: "assets/planks_oak.png".to_string(),
-        }),
-    };
-
-    ////librería
-    let libreria_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/planks_oak.png".to_string(),
-            bottom: "assets/bookshelf.png".to_string(),
-            side_x: "assets/bookshelf.png".to_string(),
-            side_z: "assets/bookshelf.png".to_string(),
-        }),
-    };
-
-    ////flores
-    let flores_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/azalea_leaves_flowers.png".to_string(),
-            bottom: "assets/azalea_leaves_flowers.png".to_string(),
-            side_x: "assets/azalea_leaves_flowers.png".to_string(),
-            side_z: "assets/azalea_leaves_flowers.png".to_string(),
-        }),
-    };
-
-    ////diamante
-    let diamante_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/diamond_ore.png".to_string(),
-            bottom: "assets/diamond_ore.png".to_string(),
-            side_x: "assets/diamond_ore.png".to_string(),
-            side_z: "assets/diamond_ore.png".to_string(),
-        }),
-    };
-
-    ////diorita
-    let diorita_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/stone_diorite.png".to_string(),
-            bottom: "assets/stone_diorite.png".to_string(),
-            side_x: "assets/stone_diorite.png".to_string(),
-            side_z: "assets/stone_diorite.png".to_string(),
-        }),
-    };
-
-
-    ////Roca
-    let roca_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/stone.png".to_string(),
-            bottom: "assets/stone.png".to_string(),
-            side_x: "assets/stone.png".to_string(),
-            side_z: "assets/stone.png".to_string(),
-        }),
-    };
-
-
-
-    ////Granito
-    let granito_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/stone_granite.png".to_string(),
-            bottom: "assets/stone_granite.png".to_string(),
-            side_x: "assets/stone_granite.png".to_string(),
-            side_z: "assets/stone_granite.png".to_string(),
-        }),
-    };
-
-
-
-    //Tierra con grama
-    let dirthGrass_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/grass_path_top.png".to_string(),
-            bottom: "assets/dirt.png".to_string(),
-            side_x: "assets/grass_path_side.png".to_string(),
-            side_z: "assets/grass_path_side.png".to_string(),
-        }),
-    };
-
-    //ladrillo
-    let purple_matte = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.8, 0.2],
-        texture_path:  Some(TextureFaces {
-            top: "assets/brick.png".to_string(),
-            bottom: "assets/brick.png".to_string(),
-            side_x: "assets/brick.png".to_string(),
-            side_z: "assets/brick.png".to_string(),
-        }),
-    };
-
-    //arena
-    let sand_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/sand.png".to_string(),
-            bottom: "assets/sand.png".to_string(),
-            side_x: "assets/sand.png".to_string(),
-            side_z: "assets/sand.png".to_string(),
-        }),
-    };
-
-    //Agua
-    let water_flow_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/water_flow.png".to_string(),
-            bottom: "assets/water_flow.png".to_string(),
-            side_x: "assets/water_flow.png".to_string(),
-            side_z: "assets/water_flow.png".to_string(),
-        }),
-    };
-
-     //Solo tierra
-    let dirt_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/dirt.png".to_string(),
-            bottom: "assets/dirt.png".to_string(),
-            side_x: "assets/dirt.png".to_string(),
-            side_z: "assets/dirt.png".to_string(),
-        }),
-    };
-
-
-    //Hierro
-    let hierro_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/iron_ore.png".to_string(),
-            bottom: "assets/iron_ore.png".to_string(),
-            side_x: "assets/iron_ore.png".to_string(),
-            side_z: "assets/iron_ore.png".to_string(),
-        }),
-    };
-
-
-    //Maderaoscura
-    let madera_oscura_material = Material {
-        diffuse: Color::new(160, 110, 230, 255),
-        specular: 32.0,
-        reflectivity: 0.1,
-        transparency: 0.0,
-        refractive_index: 1.0,
-        albedo: [0.9, 0.1],
-        texture_path:  Some(TextureFaces {
-            top: "assets/planks_big_oak.png".to_string(),
-            bottom: "assets/planks_big_oak.png".to_string(),
-            side_x: "assets/planks_big_oak.png".to_string(),
-            side_z: "assets/planks_big_oak.png".to_string(),
-        }),
-    };
-
-    // let mirror = Material {
-    //     diffuse: Color::WHITE,
-    //     specular: 1000.0,
-    //     reflectivity: 1.0,
-    //     transparency: 0.0,
-    //     refractive_index: 1.0,
-    //     albedo: [0.0, 1.0],
-    //     texture_path: Some("algo".to_string())
-    // };
-
-    // let glass = Material {
-    //     diffuse: Color::WHITE,
-    //     specular: 125.0,
-    //     reflectivity: 0.1,
-    //     transparency: 0.9,
-    //     refractive_index: 1.5,
-    //     albedo: [0.1, 0.9],
-    //     texture_path: Some("algo".to_string())
-    // };
-
-
-    // let cube = Cube {
-    //     center: Vector3::new(1.0, 0.0, -4.0),
-    //     half_size: Vector3::new(1.0, 1.0, 1.0),
-    //     rot_x: 20f32.to_radians(),
-    //     rot_y: (-30f32).to_radians(),
-    //     material: purple_matte.clone(),
-    // };
+    // Construye la escena
+    let mut scene = Scene::new();
     
-    // let cube2 = Cube {
-    //     center: Vector3::new(2.0, -3.0, -5.0),
-    //     half_size: Vector3::new(1.0, 1.0, 1.0),
-    //     rot_x: 20f32.to_radians(),
-    //     rot_y: (-30f32).to_radians(),
-    //     material: glass,
-    // };
+    // ARENA
+    scene.add_rectangle(Vector3::new(6.0, -6.0, 3.0), Vector3::new(3.0, 1.0, 6.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(8.0, -4.0, 6.0), Vector3::new(1.0, 1.0, 1.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(3.0, -4.0, 8.0), Vector3::new(4.0, 1.0, 1.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(8.0, -4.0, -3.0), Vector3::new(1.0, 1.0, 2.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(2.0, -4.0, 5.0), Vector3::new(1.0, 1.0, 2.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(6.0, -4.0, -1.0), Vector3::new(1.0, 1.0, 2.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(4.0, -4.0, 2.0), Vector3::new(1.0, 1.0, 1.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(0.0, -2.0, 4.0), Vector3::new(1.0, 1.0, 3.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(4.0, -2.0, 0.0), Vector3::new(1.0, 1.0, 1.0), mat.sand.clone());
+    scene.add_rectangle(Vector3::new(2.0, -2.0, 2.0), Vector3::new(1.0, 1.0, 1.0), mat.sand.clone());
 
-    // let cube3 = Cube {
-    //     center: Vector3::new(5.0, 2.0, -5.0),
-    //     half_size: Vector3::new(1.0, 1.0, 1.0),
-    //     rot_x: 20f32.to_radians(),
-    //     rot_y: (-30f32).to_radians(),
-    //     material: mirror,
-    // };
+    // AGUA
+    scene.add_rectangle(Vector3::new(8.0, -4.0, 2.0), Vector3::new(1.0, 1.0, 3.0), mat.water.clone());
+    scene.add_rectangle(Vector3::new(6.0, -4.0, 4.0), Vector3::new(1.0, 1.0, 3.0), mat.water.clone());
+    scene.add_rectangle(Vector3::new(4.0, -4.0, 5.0), Vector3::new(1.0, 1.0, 2.0), mat.water.clone());
 
-    //Centro
-    let center = Cube {
-        center: Vector3::new(0.0, 0.0, 0.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: purple_matte.clone(),
-    };
+    // TIERRA CON GRASS
+    scene.add_rectangle(Vector3::new(8.0, -4.0, -6.0), Vector3::new(1.0, 1.0, 1.0), mat.dirt_grass.clone());
+    scene.add_rectangle(Vector3::new(6.0, -4.0, -6.0), Vector3::new(1.0, 1.0, 1.0), mat.dirt_grass.clone());
+    scene.add_rectangle(Vector3::new(6.0, -4.0, -8.0), Vector3::new(1.0, 1.0, 1.0), mat.dirt_grass.clone());
+    scene.add_rectangle(Vector3::new(-4.0, -2.0, -6.0), Vector3::new(5.0, 1.0, 3.0), mat.dirt_grass.clone());
+    scene.add_rectangle(Vector3::new(0.0, -2.0, -1.0), Vector3::new(3.0, 1.0, 2.0), mat.dirt_grass.clone());
+    scene.add_rectangle(Vector3::new(4.0, -2.0, -3.0), Vector3::new(1.0, 1.0, 2.0), mat.dirt_grass.clone());
+    scene.add_rectangle(Vector3::new(2.0, -2.0, -5.0), Vector3::new(1.0, 1.0, 2.0), mat.dirt_grass.clone());
 
-//ARENA
-    //todos los bloques de arena de la primera capa
-    let sandbasem3 = Cube {
-        center: Vector3::new(6.0, -6.0, 3.0),
-        half_size: Vector3::new(3.0, 1.0, 6.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // TIERRA
+    scene.add_rectangle(Vector3::new(-3.0, -6.0, 6.0), Vector3::new(6.0, 1.0, 3.0), mat.dirt.clone());
+    scene.add_rectangle(Vector3::new(-2.0, -6.0, -2.0), Vector3::new(5.0, 1.0, 5.0), mat.dirt.clone());
+    scene.add_rectangle(Vector3::new(-8.0, -4.0, -1.0), Vector3::new(1.0, 1.0, 4.0), mat.dirt.clone());
 
-     let sand3_m2_4 = Cube {
-        center: Vector3::new(8.0, -4.0, 6.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // MADERA OSCURA
+    scene.add_rectangle(Vector3::new(-5.0, -4.0, 6.0), Vector3::new(4.0, 1.0, 3.0), mat.madera_oscura.clone());
+    scene.add_rectangle(Vector3::new(-7.0, -2.0, 0.0), Vector3::new(2.0, 1.0, 3.0), mat.madera_oscura.clone());
+    scene.add_rectangle(Vector3::new(-5.0, 5.5, 1.0), Vector3::new(4.0, 0.5, 6.0), mat.madera_oscura.clone());
+    scene.add_rectangle(Vector3::new(-5.0, 6.0, 1.0), Vector3::new(2.0, 0.5, 4.0), mat.madera_oscura.clone());
 
-    let sandlargeleft = Cube {
-        center: Vector3::new(3.0, -4.0, 8.0),
-        half_size: Vector3::new(4.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
 
-    let sandlarge4_m2 = Cube {
-        center: Vector3::new(8.0, -4.0, -3.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
 
-    let sandlarge1_m2 = Cube {
-        center: Vector3::new(2.0, -4.0, 5.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
 
-    let sandlarge3_m2 = Cube {
-        center: Vector3::new(6.0, -4.0, -1.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // HIERRO
+    scene.add_rectangle(Vector3::new(2.0, -6.0, -8.0), Vector3::new(1.0, 1.0, 1.0), mat.hierro.clone());
+    scene.add_rectangle(Vector3::new(-8.0, -6.0, 2.0), Vector3::new(1.0, 1.0, 1.0), mat.hierro.clone());
+    scene.add_rectangle(Vector3::new(-7.0, -6.0, -8.0), Vector3::new(2.0, 1.0, 1.0), mat.hierro.clone());
 
-    let sand2_m3_m2 = Cube {
-        center: Vector3::new(4.0, -4.0, 2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // GRANITO
+    scene.add_rectangle(Vector3::new(-3.0, -6.0, -8.0), Vector3::new(2.0, 1.0, 1.0), mat.granito.clone());
+    scene.add_rectangle(Vector3::new(-5.0, -4.0, -8.0), Vector3::new(2.0, 1.0, 1.0), mat.granito.clone());
+    scene.add_rectangle(Vector3::new(-8.0, -6.0, -5.0), Vector3::new(1.0, 1.0, 2.0), mat.granito.clone());
 
-    let sandlarge5 = Cube {
-        center: Vector3::new(0.0, -2.0, 4.0),
-        half_size: Vector3::new(1.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // DIAMANTE
+    scene.add_rectangle(Vector3::new(0.0, -6.0, -8.0), Vector3::new(1.0, 1.0, 1.0), mat.diamante.clone());
+    scene.add_rectangle(Vector3::new(-8.0, -6.0, 0.0), Vector3::new(1.0, 1.0, 1.0), mat.diamante.clone());
 
-    let sand2 = Cube {
-        center: Vector3::new(4.0, -2.0, 0.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // ROCA
+    scene.add_rectangle(Vector3::new(-8.0, -6.0, -2.0), Vector3::new(1.0, 1.0, 1.0), mat.roca.clone());
+    scene.add_rectangle(Vector3::new(4.0, -6.0, -8.0), Vector3::new(1.0, 1.0, 1.0), mat.roca.clone());
+    scene.add_rectangle(Vector3::new(-8.0, -4.0, -7.0), Vector3::new(1.0, 1.0, 2.0), mat.roca.clone());
+    scene.add_rectangle(Vector3::new(-1.0, -4.0, -8.0), Vector3::new(2.0, 1.0, 1.0), mat.roca.clone());
 
-    let sand3 = Cube {
-        center: Vector3::new(2.0, -2.0, 2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: sand_material.clone(),
-    };
+    // FLORES
+    scene.add_rectangle(Vector3::new(-1.0, -2.0, 8.0), Vector3::new(2.0, 1.0, 1.0), mat.flores.clone());
+    scene.add_rectangle(Vector3::new(-2.0, 0.0, 8.0), Vector3::new(1.0, 1.0, 1.0), mat.flores.clone());
+    scene.add_rectangle(Vector3::new(-2.0, 0.0, -2.0), Vector3::new(1.0, 1.0, 1.0), mat.flores.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 0.0, -4.0), Vector3::new(1.0, 1.0, 1.0), mat.flores.clone());
 
+    // LIBRERÍA
+    scene.add_rectangle(Vector3::new(-4.0, -2.0, 6.0), Vector3::new(1.0, 1.0, 3.0), mat.libreria.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 0.0, 2.0), Vector3::new(1.0, 1.0, 1.0), mat.libreria.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 2.0, 4.0), Vector3::new(1.0, 1.0, 1.0), mat.libreria.clone());
+    scene.add_rectangle(Vector3::new(-2.0, 0.0, 6.0), Vector3::new(1.0, 1.0, 1.0), mat.libreria.clone());
     
 
-//AGUA
-    let water4_large = Cube {
-        center: Vector3::new(8.0, -4.0, 2.0),
-        half_size: Vector3::new(1.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: water_flow_material.clone(),
-    };
 
-    let water3_large = Cube {
-        center: Vector3::new(6.0, -4.0, 4.0),
-        half_size: Vector3::new(1.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: water_flow_material.clone(),
-    };
+    // MADERA
+    scene.add_rectangle(Vector3::new(-4.0, 2.0, -1.0), Vector3::new(1.0, 3.0, 2.0), mat.madera.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 1.0, 8.0), Vector3::new(1.0, 2.0, 1.0), mat.madera.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 3.0, 6.0), Vector3::new(1.0, 2.0, 1.0), mat.madera.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 4.0, 3.0), Vector3::new(1.0, 1.0, 2.0), mat.madera.clone());
+    scene.add_rectangle(Vector3::new(-6.0, 2.0, -4.0), Vector3::new(1.0, 3.0, 1.0), mat.madera.clone());
+    scene.add_rectangle(Vector3::new(-8.0, 4.0, -4.0), Vector3::new(1.0, 1.0, 1.0), mat.madera.clone());
 
-    let water2_large = Cube {
-        center: Vector3::new(4.0, -4.0, 5.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: water_flow_material.clone(),
-    };
+    // HORNO
+    scene.add_rectangle(Vector3::new(-4.0, 2.0, 2.0), Vector3::new(1.0, 1.0, 1.0), mat.horno.clone());
+    scene.add_rectangle(Vector3::new(-4.0, 0.0, 5.0), Vector3::new(1.0, 1.0, 2.0), mat.horno.clone());
+    scene.add_rectangle(Vector3::new(-2.0, 0.0, 4.0), Vector3::new(1.0, 1.0, 1.0), mat.horno.clone());
 
-//TIERRA GRASSS
+    //musical
+    scene.add_rectangle(Vector3::new(-2.0, 0.0, 2.0), Vector3::new(1.0, 1.0, 1.0), mat.musical.clone());
 
-    let dirthm3_m2_4 = Cube {
-        center: Vector3::new(8.0, -4.0, -6.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirthGrass_material.clone(),
-    };
+    //calabaza
+    scene.add_rectangle(Vector3::new(2.0, -2.0, -8.0), Vector3::new(1.0, 1.0, 1.0), mat.calabaza.clone());
+    scene.add_rectangle(Vector3::new(6.0, -2.0, -4.0), Vector3::new(1.0, 1.0, 1.0), mat.calabaza.clone());
 
-    let dirthm4_m2_3 = Cube {
-        center: Vector3::new(6.0, -4.0, -6.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirthGrass_material.clone(),
-    };
+    //Redstone
+    scene.add_rectangle(Vector3::new(4.0, -2.0, -6.0), Vector3::new(1.0, 1.0, 1.0), mat.redstone_lamp.clone());
+    scene.add_rectangle(Vector3::new(-6.0, 0.0, -2.0), Vector3::new(1.0, 1.0, 1.0), mat.redstone_lamp.clone());
 
-    let dirthm3_m2_3 = Cube {
-        center: Vector3::new(6.0, -4.0, -8.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirthGrass_material.clone(),
-    };
+    // Después de construir la escena, antes del loop principal:
 
-    let dirthm1_m1_3 = Cube {
-        center: Vector3::new(6.0, -2.0, -2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirthGrass_material.clone(),
-    };
+    let objects_slice = scene.as_slice();
 
-    let dirtGrass1 = Cube {
-        center: Vector3::new(-4.0, -2.0, -6.0),
-        half_size: Vector3::new(5.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirthGrass_material.clone(),
-    };
+    // ¡CREA MÚLTIPLES LUCES!
+    let lights = vec![
+        // Luz principal - Sol alto en el cielo
+        Light {
+            position: Vector3::new(10.0, 15.0, 5.0),
+            color: Vector3::new(1.0, 0.95, 0.9),  // Luz solar cálida
+            intensity: 1.2,
+        },
 
-    let dirtGrass2 = Cube {
-        center: Vector3::new(1.0, -2.0, -1.0),
-        half_size: Vector3::new(2.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirthGrass_material.clone(),
-    };
+        Light {
+            position: Vector3::new(0.0, 0.0, 14.0),
+            color: Vector3::new(1.0, 0.95, 0.9),  // Luz solar cálida
+            intensity: 1.2,
+        },
 
+        Light {
+            position: Vector3::new(0.0, -10.0, 0.0),
+            color: Vector3::new(1.0, 0.95, 0.9),  // Luz solar cálida
+            intensity: 1.2,
+        },
 
+        Light {
+            position: Vector3::new(0.0, 0.0, -14.0),
+            color: Vector3::new(1.0, 0.95, 0.9),  // Luz solar cálida
+            intensity: 1.2,
+        },
 
-//TIERRA SOLO
-    let dirtObase1 = Cube {
-        center: Vector3::new(-3.0, -6.0, 6.0),
-        half_size: Vector3::new(6.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirt_material.clone(),
-    };
+        Light {
+            position: Vector3::new(-6.0, 0.0, 0.0),
+            color: Vector3::new(1.0, 0.95, 0.9),  // Luz solar cálida
+            intensity: 1.2,
+        },
+        // Luz de relleno - Más suave, desde otro ángulo
+        Light {
+            position: Vector3::new(-8.0, 10.0, -5.0),
+            color: Vector3::new(0.7, 0.8, 1.0),  // Luz fría azulada
+            intensity: 0.5,
+        },
+        // Luz ambiental baja - Simula luz rebotada
+        Light {
+            position: Vector3::new(0.0, 5.0, 10.0),
+            color: Vector3::new(1.0, 1.0, 1.0),  // Blanca neutral
+            intensity: 0.3,
+        },
+        // Luz de acento - Para resaltar zonas específicas
+        Light {
+            position: Vector3::new(4.0, -2.0, -6.0),
+            color: Vector3::new(1.0, 0.8, 0.6),  // Cálida anaranjada
+            intensity: 0.6,
+        },
 
-    let dirtObase2 = Cube {
-        center: Vector3::new(-2.0, -6.0, -2.0),
-        half_size: Vector3::new(5.0, 1.0, 5.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirt_material.clone(),
-    };
+        
+    ];
 
-    let dirtBack = Cube {
-        center: Vector3::new(-8.0, -4.0, -1.0),
-        half_size: Vector3::new(1.0, 1.0, 4.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: dirt_material.clone(),
-    };
+    let mut camera = Camera::new(
+        Vector3::new(30.0, 5.0, 30.0),
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 0.0),
+    );
 
-
-//MADERA OSCURA
-    let maderaOscura1 = Cube {
-        center: Vector3::new(-5.0, -4.0, 6.0),
-        half_size: Vector3::new(4.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: madera_oscura_material.clone(),
-    };
-
-    let maderaOscura2 = Cube {
-        center: Vector3::new(-7.0, -2.0, 0.0),
-        half_size: Vector3::new(2.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: madera_oscura_material.clone(),
-    };
-
-//HIERRO
-
-    let ironRigth = Cube {
-        center: Vector3::new(2.0, -6.0, -8.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: hierro_material.clone(),
-    };
-
-    let ironBack = Cube {
-        center: Vector3::new(-8.0, -6.0, 2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: hierro_material.clone(),
-    };
-
-    let ironLarge = Cube {
-        center: Vector3::new(-7.0, -6.0, -8.0),
-        half_size: Vector3::new(2.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: hierro_material.clone(),
-    };
-
-//Granito
-
-    let graniteLRigth = Cube {
-        center: Vector3::new(-3.0, -6.0, -8.0),
-        half_size: Vector3::new(2.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: granito_material.clone(),
-    }; 
-
-    let graniteRigth = Cube {
-        center: Vector3::new(-5.0, -4.0, -8.0),
-        half_size: Vector3::new(2.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: granito_material.clone(),
-    };
-
-
-    let graniteBack = Cube {
-        center: Vector3::new(-8.0, -6.0, -5.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: granito_material.clone(),
-    };
-
-//diamante
-    let diamanteRigth = Cube {
-        center: Vector3::new(0.0, -6.0, -8.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: diamante_material.clone(),
-    };
-
-    let diamanteBack = Cube {
-        center: Vector3::new(-8.0, -6.0, 0.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: diamante_material.clone(),
-    };
-
-//Roca
-    let rocaBack = Cube {
-        center: Vector3::new(-8.0, -6.0, -2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: roca_material.clone(),
-    };
-
-    let rocaRigth = Cube {
-        center: Vector3::new(4.0, -6.0, -8.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: roca_material.clone(),
-    };
-
-    let rocaEsquina = Cube {
-        center: Vector3::new(-8.0, -4.0, -7.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: roca_material.clone(),
-    };
-
-    let rocaRigth2 = Cube {
-        center: Vector3::new(-1.0, -4.0, -8.0),
-        half_size: Vector3::new(2.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: roca_material.clone(),
-    };
-
-
-//Flores
-    let flores1 = Cube {
-        center: Vector3::new(-1.0, -2.0, 8.0),
-        half_size: Vector3::new(2.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: flores_material.clone(),
-    };
-
-//libraria
-    let libreria1 = Cube {
-        center: Vector3::new(-4.0, -2.0, 6.0),
-        half_size: Vector3::new(1.0, 1.0, 3.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: libreria_material.clone(),
-    };
-
-    let libreria2 = Cube {
-        center: Vector3::new(-4.0, 0.0, 2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: libreria_material.clone(),
-    };
-
-    let libreria3 = Cube {
-        center: Vector3::new(-4.0, 2.0, 4.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: libreria_material.clone(),
-    };
-
-//madera
-    let madera1 = Cube {
-        center: Vector3::new(-4.0, 2.0, -1.0),
-        half_size: Vector3::new(1.0, 3.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: madera_material.clone(),
-    };
-
-    let madera2 = Cube {
-        center: Vector3::new(-4.0, 1.0, 8.0),
-        half_size: Vector3::new(1.0, 2.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: madera_material.clone(),
-    };
-
-    let madera3 = Cube {
-        center: Vector3::new(-4.0, 3.0, 6.0),
-        half_size: Vector3::new(1.0, 2.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: madera_material.clone(),
-    };
-
-    let madera4 = Cube {
-        center: Vector3::new(-4.0, 4.0, 3.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: madera_material.clone(),
-    };
-
-
- 
- //madera
-    let horno1 = Cube {
-        center: Vector3::new(-4.0, 2.0, 2.0),
-        half_size: Vector3::new(1.0, 1.0, 1.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: horno_material.clone(),
-    };
-
-  
-    let horno2 = Cube {
-        center: Vector3::new(-4.0, 0.0, 5.0),
-        half_size: Vector3::new(1.0, 1.0, 2.0),
-        rot_x: 0.0,
-        rot_y: 0.0,
-        material: horno_material.clone(),
-    };
-   
-
-
-
-
-
-
-   
-
-    let objects_vec: Vec<&dyn RayIntersect> = vec![
-        //&center, 
-    
-          
-            &sand3_m2_4, &sandlargeleft, &sandlarge4_m2, &sandlarge3_m2,
-            &sandbasem3, &sandlarge1_m2, &sand2_m3_m2, &sandlarge5, &sand2, &sand3,
-         
-            &water4_large, &water3_large, &water2_large,
-
-
-            &dirthm3_m2_4, &dirthm4_m2_3, &dirthm3_m2_3, 
-            &dirtGrass1, &dirtGrass2,
-            //&tierra,
-            &dirtObase1, &dirtObase2, &dirtBack,
-
-            &ironBack, &ironLarge, &ironRigth,
-
-            &maderaOscura1, &maderaOscura2,
-
-            &graniteBack, &graniteLRigth, &graniteRigth,
-            &diamanteBack, &diamanteRigth,
-
-            &rocaBack, &rocaRigth, &rocaEsquina, &rocaRigth2,
-            &flores1,
-            &libreria1, &libreria2, &libreria3,
-            &madera1, &madera2, &madera3, &madera4,
-            &horno1, &horno2,
-
-          ];
-    let objects_slice: &[&dyn RayIntersect] = &objects_vec;
-
-        let mut camera = Camera::new(
-            Vector3::new(30.0, 5.0, 30.0),  // eye
-            Vector3::new(0.0, 0.0, 0.0),  // center
-            Vector3::new(0.0, 1.0, 0.0),  // up
-        );
     let rotation_speed = PI / 50.0;
+    let zoom_speed = 2.0;
 
     while !window.window_should_close() {
         framebuffer.clear();
 
-        if window.is_key_down(KeyboardKey::KEY_LEFT) {
+        if window.is_key_down(KeyboardKey::KEY_A) {
             camera.orbit(rotation_speed, 0.0);
         }
-        if window.is_key_down(KeyboardKey::KEY_RIGHT) {
+        if window.is_key_down(KeyboardKey::KEY_D) {
             camera.orbit(-rotation_speed, 0.0);
         }
-        if window.is_key_down(KeyboardKey::KEY_UP) {
+        if window.is_key_down(KeyboardKey::KEY_W) {
             camera.orbit(0.0, -rotation_speed);
         }
-        if window.is_key_down(KeyboardKey::KEY_DOWN) {
+        if window.is_key_down(KeyboardKey::KEY_S) {
             camera.orbit(0.0, rotation_speed);
         }
 
-        render(&mut framebuffer, objects_slice, &camera, &texture_manager);
-
+        if window.is_key_down(KeyboardKey::KEY_DOWN) {
+            camera.zoom(zoom_speed); // Negativo = acercar
+        }
+        if window.is_key_down(KeyboardKey::KEY_UP) {
+            camera.zoom(-zoom_speed);  // Positivo = alejar
+        }
+        // ¡Pasa el vector de luces en lugar de una sola luz!
+        render(&mut framebuffer, &objects_slice, &camera, &lights, &texture_manager, &skybox);
         framebuffer.swap_buffers(&mut window, &raylib_thread);
     }
 }
-
