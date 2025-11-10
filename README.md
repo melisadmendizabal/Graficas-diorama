@@ -1,5 +1,6 @@
 # Graficas-diorama
 Un raytracer en Rust que renderiza escenas tipo Minecraft con iluminación realista, texturas, reflejos y transparencias.
+Link de video: https://uvggt-my.sharepoint.com/:v:/g/personal/men23778_uvg_edu_gt/EUnA-XjBL2VAlweS-e4U7pABR1txFZ_0Uqsa7ncZWyNGiA?e=kcGdoA&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D 
 
 <img width="910" height="731" alt="image" src="https://github.com/user-attachments/assets/acd00d7e-505b-4f10-a5f6-bdd749e64d2b" />
 
